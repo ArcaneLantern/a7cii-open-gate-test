@@ -1,0 +1,59 @@
+# A7C II open gate: field test kit (UNTESTED)
+
+For the Sony A7C II (ILCE-7CM2) on firmware **2.01**. A port of the A7 IV open-gate kit (a7iv-open-gate-test).
+Writes **temporary settings** into the camera's memory **only**; a cold boot (battery out for 10 seconds) returns it to stock.
+
+> **Nothing in this kit has run on an A7C II yet.** Every step is the A7 IV's working step, rebuilt for the A7C II's firmware:
+> the same tables found at the A7C II's addresses and checked byte for byte, and each library run against a model of the A7C II.
+> Each step first checks that the camera's memory holds exactly the A7C II 2.01 stock bytes and writes nothing otherwise.
+> First testers: please send the `camera_private` folders and say what the camera did.
+
+## What it does
+
+| | 4K | 5.7K |
+|---|---|---|
+| File | 3840x2560, XAVC HS 4K or XAVC S 4K | 5760x3840, XAVC HS 4K |
+| Frame rate | 24p (NTSC), 25p XAVC S 4K (PAL) | 24p (NTSC), 25p XAVC S 4K (PAL) |
+| Bit rate | the menu's | the 100M settings record at about 300 Mbps (use a fast card) |
+| Rear screen | 3:2, whole picture, focus frames drawn | the same |
+| De-squeeze preview | **C2** in movie mode: 3:2 -> 2:1 (1.33x) -> 2.4:1 (1.6x) -> 3:2 | the same |
+
+The A7C II has no C3 key, so the preview key is **C2** (in movie mode C2 is taken over; in stills it works as before).
+The file is not de-squeezed; only the preview is.
+
+- `windows/open_gate_4k.cmd`, `windows/open_gate_5.7k.cmd`: apply. `windows/open_gate_putback_4k.cmd`, `..._5.7k.cmd`: put back step by step (a cold boot does the same).
+- `macos/*.command`: the same four on a Mac.
+- `android/A7CII-OpenGate.apk`: the phone app (USB-C to the camera), when published.
+
+Options (add them after the launcher name in a command window): `--ntsc`, `--pal`, `--no-cycle` (C2 keeps its own function),
+`--no-lcd32` (no screen steps), `--rate100` (5.7K at the menu's bit rate), `--dry-run`, `--selftest` (both send nothing).
+
+## Before you start
+
+1. Firmware 2.01 (Menu > Setup > Version).
+2. Set File Format (XAVC HS 4K or XAVC S 4K), 24p (NTSC) or 25p with XAVC S 4K (PAL), full frame (APS-C/Super 35 off), not S&Q.
+3. Cold boot: power off, battery out for 10 seconds, battery in. Turn on with the Still/Movie/S&Q switch on **stills**.
+4. Connect USB, USB Connection Mode: Mass Storage. Re-select it whenever the camera comes back between steps; do not power the camera off.
+
+While it is applied, record only in the format and frame rate above, full frame. Other formats, HD, S&Q and APS-C are not set up.
+
+## Windows
+
+Once: install Python 3, run `windows/setup.cmd`, then install the libusb-win32 driver for the camera with Zadig (camera on, Mass
+Storage; again once it has switched to service mode). Then run a launcher.
+
+## macOS
+
+Once: double-click `macos/setup.command` (Python 3.9 or later; no Homebrew, no driver). Then double-click a launcher; it asks for
+your password to take the camera over from macOS's own USB driver. If macOS refuses to open a .command file, use System Settings >
+Privacy & Security > Open Anyway.
+
+## Android
+
+USB-C to C cable and a phone with USB OTG. Camera on stills, Mass Storage, then pick 4K or 5.7K and tap Apply.
+
+## What to report (first runs)
+
+Does each step say DONE; does it record; the clip's size and frame rate (MediaInfo); does the picture show the whole sensor height
+(compare with a photo of the same scene); the rear screen in movie mode; what C2 does; whether switching the camera off and on
+removes the settings; anything odd. Zip and send the newest folders in `windows/camera_private`.
