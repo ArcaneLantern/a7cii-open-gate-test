@@ -199,6 +199,7 @@ def connect(session):
             raise c.StopTest("the mass-storage device does not identify as a Sony camera")
         phase_a(session, inner)
         session.say("Waiting for the camera to switch")
+        session.say("  (The A7C II shows its USB connection prompt when it switches: choose Mass Storage there.)")
         handle = wait_for_service_device(session)
         rows = c.print_pnp(session, "after the switch")
         if handle is None:
