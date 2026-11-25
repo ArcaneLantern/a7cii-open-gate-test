@@ -46,6 +46,12 @@ PINS = {
     (20, "ogfile57r300_c2_v1"): "e84ddbb014041f301c45c9af6ef3e83fbeed5ca8212eacf8c7fedcfb49e66a58",
     (19, "ogfile57_c2_v1"): "d6f67cfe7d78ec5f5ccca2591ce2f4de263096a8dba644fd8c3d01b80198b12f",
     (20, "ogfile57_c2_v1"): "2639d39605249ebde472c1866c72cf62ef950220e41890027c8f9c67f131e98b",
+    # 2026-11-25: the A7 IV's metadata fix (F987/F989): the MP4 headers (tkhd, stsd, Sony's PROF) state 3840x2560 / 5760x3840. The 5.7K step is the
+    # A7 IV's ogfile57r300m1_v4 (also I and P pictures only, F981/F986, and the HEVC edit list at 0). build_ogfile.py / build_og57.py --meta --build a7c2_201.
+    (19, "ogfile2560_hs_s_c2_v2"): "d2187e06bd17ac3befc8b9a26802e84c46f388d4de2a7c5aa54da11d58893839",
+    (20, "ogfile2560_hs_s_c2_v2"): "0e1a536e28344b4eecd5792591b43a068f52f54889f2122004dd12ed3e2feb2d",
+    (19, "ogfile57r300m1_c2_v4"): "352829b1dd5eb85c3b7b67a37b496b4cff8c5935d5f846e39c4fd2f32bc49b44",
+    (20, "ogfile57r300m1_c2_v4"): "1cb2149c38aea617514bf299534724d265811d78bdf96fc844dcfe089568a37f",
     # the C2 preview routine in appFw.so (build/build_lcdcycle_c2.py; its cave is in .rela.dyn: modding/A7C2_PORT_LCDCYCLE.md)
     (19, "lcdcycle_c2_v1"): "15f0bcacb624779a3009c83f67ff732b87fcb4da5d0c39359db9d9cd35c3b1a3",
     (20, "lcdcycle_c2_v1"): "c5006d19529ad9bc30c7216dd4e5f02695bc8f01a509a0ec7caf21f434f5a212",

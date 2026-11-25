@@ -170,7 +170,10 @@ def mp_header(name):
     av, lm = (EX / "nflasha3/av-cam.bin").read_bytes(), (EX / "nflasha15/lib/libmpr.so").read_bytes()
     assert d.get("build") == "a7c2_201"
     assert d["artifact_sha256"] == {"libmpr.so": hashlib.sha256(lm).hexdigest(), "av-cam.bin": hashlib.sha256(av).hexdigest()}
-    assert not any(p["code"] for p in d["patches"]), "not a data-only design"
+    # as gen_expected.py --mp (2026-11-24): a code site only in libmpr.so and only where the design names it in libmpr_code_guards, whose
+    # instructions around it become guards (the A7C II's metadata and edit-list sites, 2026-11-25)
+    code_ok = {int(g["site"], 16): g["guards"] for g in d.get("libmpr_code_guards", [])}
+    assert all(not p["code"] or (p["binary"] == "libmpr.so" and int(p["file_off"], 16) in code_ok) for p in d["patches"]),         "not a data-only encoder-side design (a code site must be in libmpr.so and named in libmpr_code_guards)"
     tabs = {"av-cam.bin": [], "libmpr.so": []}
     for p in d["patches"]:
         off, old, new = int(p["file_off"], 16), bytes.fromhex(p["old"]), bytes.fromhex(p["new"])
@@ -184,6 +187,12 @@ def mp_header(name):
         g_av.append((o, av[o:o + 4]))
     g_lm = [(0, lm[:16])]
     for off, _, old, new in tabs["libmpr.so"]:
+        if off in code_ok:                                       # a named code site: its guards are the instructions the design lists
+            for g in code_ok[off]:
+                a, b = int(g["file_off"], 16), bytes.fromhex(g["bytes"])
+                assert lm[a:a + len(b)] == b and len(b) <= 16
+                g_lm.append((a, b))
+            continue
         if len(old) == 4:                                        # a site that is the row's whole raster (width and height): the guard is the codec before it
             assert (off - 4 - COMB) % 0x18 == 0 and struct.unpack("<HH", old) == (3840, 2160)
             g_lm.append((off - 4, lm[off - 4:off]))
@@ -279,7 +288,7 @@ if __name__ == "__main__":
     print("dmm header:", dmm_header())
     for n in ("outsz2560_c2_v1", "og57cp_c2_v3", "lcdfill_c2_v2"):
         print("words header", n, words_header(n))
-    for n in ("ogfile2560_hs_s_c2_v1", "ogfile57r300_c2_v1", "ogfile57_c2_v1"):
+    for n in ("ogfile2560_hs_s_c2_v1", "ogfile57r300_c2_v1", "ogfile57_c2_v1", "ogfile2560_hs_s_c2_v2", "ogfile57r300m1_c2_v4"):
         print("mp header", n, mp_header(n))
     if (DES / "lcdcycle_c2_v1.json").exists():
         print("mp header, C2 routine:", mp_appfw_header())

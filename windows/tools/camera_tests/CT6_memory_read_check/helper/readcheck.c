@@ -68,6 +68,15 @@
  *            stock or the design's bytes, and the kernel's view must equal the mapping. On any failure everything this run wrote is
  *            put back. A cold boot undoes it: av-cam.bin is loaded again from flash and the process starts anew.
  *   level 20 the same code with the two byte sets exchanged: puts the stock bytes back.
+ *   level 29 level 1, then CODE AND DATA OF av-cam.bin, the kernel's AV image (an av-cam code design of helper_fx3/gen_fx3_write.py; the
+ *            first is avdec8k_fx3_v1, the FX3's playback decoder in the A7 IV's form). The code page is mapped read-write through /dev/mem
+ *            at a user address with the kernel address's offset from a 2 MB boundary, the data page as level 19 maps its tables. Before
+ *            anything is written every byte of the code page apart from the sites must be as in the file, every data guard as in the file,
+ *            every site must hold the stock or the design's word, the kernel's view must equal the mappings, CTR_EL0 must name a PIPT or
+ *            VIPT instruction cache, and the cache maintenance is run once on the sites as they are. Each site is one aligned 32-bit store,
+ *            read back in both views; after the code writes, the data cache is cleaned and the instruction cache invalidated at every site on
+ *            every processor. Code first, data last; on any failure everything this run wrote is put back. A cold boot undoes it.
+ *   level 30 the same code with the two word sets exchanged and the order reversed (data first, code last): puts the stock words back.
  *   level 27 level 1, then WRITES: stage V4 of modding/VCD_V4_DESIGN.md. Checks that the codec is off and that its program area at
  *            0x43c000000 holds the stock stubs, writes the three hello_v1 boot stubs there (cached mapping, dc civac, read back in two views),
  *            replays av-cam's own clock-on store by store (F782), releases the codec CPUs (+0x80 = 0), reads the records the stubs write for
@@ -97,8 +106,8 @@
 #ifndef LEVEL
 #define LEVEL 1
 #endif
-#if LEVEL < 1 || LEVEL > 28 || LEVEL == 11
-#error "LEVEL must be 1 to 10, or 12 to 28"
+#if LEVEL < 1 || LEVEL > 31 || LEVEL == 11
+#error "LEVEL must be 1 to 10, or 12 to 31"
 #endif
 #if LEVEL >= 3 && defined(HOST_TEST)
 #error "levels 3 to 8 have no PC build: they call three functions of the camera's libsencore.so (see emu_built.py)"
@@ -128,7 +137,11 @@
 
 #define FILE_CAP   (64 * 1024)             /* at most this much of any one file is copied */
 #define MAPS_CAP   (512 * 1024)            /* except the list of mappings: 64 KB cut it short on the camera (F509) */
+#if LEVEL == 31
+#define TOTAL_CAP  (2 * 1024 * 1024)       /* level 31 only: level 1's part plus at most 1.5 MB of spans (GET_FILE2's first transfer tier is 5 MB) */
+#else
 #define TOTAL_CAP  (1024 * 1024)           /* at most this much is written in all */
+#endif
 #define DIR_ENTRIES_CAP 64
 
 typedef unsigned char u8;
@@ -189,15 +202,15 @@ static i64 sys_write(int fd, const void *b, u64 n) { return sc(NR_write, fd, (i6
 static i64 sys_close(int fd) { return sc(NR_close, fd, 0, 0, 0, 0, 0); }
 static i64 sys_getdents64(int fd, void *b, u64 n) { return sc(NR_getdents64, fd, (i64)b, (i64)n, 0, 0, 0); }
 static i64 sys_geteuid(void) { return sc(NR_geteuid, 0, 0, 0, 0, 0, 0); }
-#if LEVEL == 2 || LEVEL == 3 || (LEVEL >= 7 && LEVEL <= 12) || LEVEL == 15 || LEVEL == 18 || (LEVEL >= 21 && LEVEL <= 28)  /* a level 1 build contains no mapping call at all */
+#if LEVEL == 2 || LEVEL == 3 || (LEVEL >= 7 && LEVEL <= 12) || LEVEL == 15 || LEVEL == 18 || (LEVEL >= 21 && LEVEL <= 28) || LEVEL == 31  /* a level 1 build contains no mapping call at all */
 static i64 sys_mmap_ro(int fd, u64 len, u64 off)
 {
     i64 r = sc(NR_mmap, 0, (i64)len, 1 /* PROT_READ */, 1 /* MAP_SHARED */, fd, (i64)off);
     return (r < 0 && r > -4096) ? -1 : r;
 }
 #endif
-/* The only writable mapping call in this file. Levels 4 to 6, 13, 14, 16 and 17 map their own transfer buffer to fill it; levels 19 and 20 map the pages of av-cam.bin's tables; levels 24 and 25 one page of a codec firmware copy at a time. */
-#if (LEVEL >= 4 && LEVEL <= 6) || LEVEL == 13 || LEVEL == 14 || LEVEL == 16 || LEVEL == 17 || LEVEL == 19 || LEVEL == 20 || LEVEL == 24 || LEVEL == 25 || LEVEL == 27
+/* The only writable mapping call in this file (and levels 29 and 30's ad_map_code). Levels 4 to 6, 13, 14, 16 and 17 map their own transfer buffer to fill it; levels 19 and 20 map the pages of av-cam.bin's tables; levels 24 and 25 one page of a codec firmware copy at a time; levels 29 and 30 one page of av-cam.bin's data. */
+#if (LEVEL >= 4 && LEVEL <= 6) || LEVEL == 13 || LEVEL == 14 || LEVEL == 16 || LEVEL == 17 || LEVEL == 19 || LEVEL == 20 || LEVEL == 24 || LEVEL == 25 || LEVEL == 27 || LEVEL == 29 || LEVEL == 30
 static i64 sys_mmap_rw(int fd, u64 len, u64 off)
 {
     i64 r = sc(NR_mmap, 0, (i64)len, 3 /* PROT_READ | PROT_WRITE */, 1 /* MAP_SHARED */, fd, (i64)off);
@@ -1257,6 +1270,14 @@ extern u32 sen_dma_transfer(u32 dir, u64 src, u64 dst, u32 size);   /* dir 0: co
 #define OBJ 0x50U                          /* one unit object: +2 flags (bit 0: divided), +0x14 size, +0x20 parent object, +0x24 key */
 #define POOL (N_OBJ * OBJ)
 #define N_SITES (sizeof dmm_sites / sizeof dmm_sites[0])
+/* The texts name the A7 IV design's four words; a design with another count names its own (-DDMM_WORDS_TEXT= ...: helper_zv/build_zv_write.sh).
+   The defaults give the same strings as before, so the A7 IV and A7C II libraries build to their pinned hashes. */
+#ifndef DMM_WORDS_TEXT
+#define DMM_WORDS_TEXT "the four memory-manager words"
+#define DMM_DONE_TEXT "all four sites hold"
+#define DMM_RECS_TEXT "the four records and the parent's are as in the file; two units of the new size fit"
+#define DMM_NOFIT_TEXT "two units of the new size do not fit the parent"
+#endif
 #if LEVEL == 13
 #define FROM(s) ((s)->stock)               /* what a site must hold before */
 #define TO(s) ((s)->changed)               /* what it holds after */
@@ -1364,9 +1385,9 @@ static int precheck(const struct dmm_rec *recs, u32 nrecs, const struct dmm_rec 
                 put32("!! the parent's record at", parents[k].address); puts_(" is not as in the file; nothing is written\n");
                 return 1;
             }
-        if ((u64)fit[1] * fit[0] > le32(p + 12)) { puts_("!! two units of the new size do not fit the parent; nothing is written\n"); return 1; }
+        if ((u64)fit[1] * fit[0] > le32(p + 12)) { puts_("!! " DMM_NOFIT_TEXT "; nothing is written\n"); return 1; }
     }
-    puts_("checks passed: no unit of the present division exists; the four records and the parent's are as in the file; two units of the new size fit\n");
+    puts_("checks passed: no unit of the present division exists; " DMM_RECS_TEXT "\n");
     return 0;
 }
 
@@ -1380,7 +1401,7 @@ static void level13(void)
     const u32 *volatile busy = dmm_busy_keys;
     const u32 *volatile fit = dmm_fit;
     u32 handle = 0;
-    puts_("== level "); putnum(LEVEL); puts_(": " VERB " the four memory-manager words of " DMM_DESIGN "\n");
+    puts_("== level "); putnum(LEVEL); puts_(": " VERB " " DMM_WORDS_TEXT " of " DMM_DESIGN "\n");
     l13_phys = cam_dmm_alloc(CP_PAGE, &handle);
     if (!l13_phys) { puts_("!! buffer allocation failed; nothing is written\n"); return; }
     if ((l13_phys & 0x3f) || l13_phys < RAM_LO || l13_phys + CP_PAGE > RAM_HI) {
@@ -1431,7 +1452,7 @@ static void level13(void)
             if (site_state(s) != 1) { say_site("site", s); puts_("!! does not hold the target bytes\n"); failed = 1; }
         }
     }
-    if (!failed) { puts_("DONE: all four sites hold the target bytes (" VERB ")\n"); goto out; }
+    if (!failed) { puts_("DONE: " DMM_DONE_TEXT " the target bytes (" VERB ")\n"); goto out; }
 
     puts_("undo: every site this run touched gets its earlier bytes back\n");
     int left = 0;
@@ -2414,6 +2435,247 @@ static void level19(void)
 }
 #endif
 
+/* ------------------------------------------------------------------ levels 29 and 30: code and data sites of av-cam.bin, applied or put back */
+
+/* av-cam.bin runs in the kernel at AD_KVA + file offset (liro.ko loads it at AVCAM_PHYS). Its data is written as level 19 writes it; its code is
+ * a new kind of write here, kernel text: a processor may have the old instruction in its instruction cache or its pipeline, and a virtually
+ * indexed instruction cache files a line under the address it was fetched at. So:
+ *   - the code page is mapped at a user address with the kernel address's offset from an AD_ALIGN boundary (2 MB), so that an invalidation
+ *     through this mapping reaches the index the kernel's fetches use; an instruction cache that CTR_EL0 calls neither PIPT nor VIPT is refused;
+ *   - each site is one aligned 32-bit store: no processor can see half an instruction;
+ *   - after the code writes, each site's line is cleaned to the point of unification and the instruction cache invalidated at it, both
+ *     broadcast to every processor (inner shareable), then dsb ish and isb (ad_sync);
+ *   - the whole maintenance sequence runs once before anything is written: if this processor did not allow it from this process, the
+ *     process would end there, with nothing changed;
+ *   - order: apply writes the code sites first and the data sites last; put back the data first and the code last (the design's rule: no state
+ *     between the two halves may be worse than stock). An undo runs as a put back does.
+ * Every byte of the code page apart from the sites must be as in the file, in the mapping and in the kernel's own view; the data entries are
+ * checked as level 19 checks its tables. The change does not survive a cold boot. */
+#if LEVEL == 29 || LEVEL == 30
+#ifndef AD_H
+#error "levels 29 and 30 need -DAD_H with the header that helper_fx3/gen_fx3_write.py writes for an av-cam.bin code design"
+#endif
+#ifndef AVCAM_PHYS
+#error "levels 29 and 30 need -DAVCAM_PHYS=<physical load address of av-cam.bin>"
+#endif
+#include AD_H                              /* AD_DESIGN, AD_KVA, AD_CODE_PAGE, AD_DATA_PAGE, AD_ALIGN, struct ad_site, ad_code[], ad_data[], ad_code_file[] */
+#if LEVEL == 29
+#define AD_FROM(e) ((e)->stock)
+#define AD_TO(e) ((e)->changed)
+#define AD_VERB "apply"
+#else
+#define AD_FROM(e) ((e)->changed)
+#define AD_TO(e) ((e)->stock)
+#define AD_VERB "put back"
+#endif
+#define NR_pread64 67
+#define F_RDWR 2                           /* O_RDWR, and no O_SYNC: a cached mapping, as the kernel's own map is (see level19()) */
+#define AD_PAGE 0x1000UL
+#define AD_NC (sizeof ad_code / sizeof ad_code[0])
+#define AD_ND (sizeof ad_data / sizeof ad_data[0])
+_Static_assert(AD_NC >= 1 && AD_NC <= 16 && AD_ND >= 1 && AD_ND <= 16, "small tables");
+_Static_assert(AD_CODE_PAGE % AD_PAGE == 0 && AD_DATA_PAGE % AD_PAGE == 0 && AD_CODE_PAGE != AD_DATA_PAGE, "two whole pages");
+_Static_assert(AD_ALIGN >= AD_PAGE && (AD_ALIGN & (AD_ALIGN - 1)) == 0 && AD_KVA % AD_ALIGN == 0, "the alias rule");
+
+static void ad_putx(u64 v)
+{
+    u8 be[8]; int k = 0;
+    for (int i = 0; i < 8; i++) be[i] = (u8)(v >> (8 * (7 - i)));
+    while (k < 7 && !be[k]) k++;
+    puts_("0x"); puthex(be + k, (u64)(8 - k));
+}
+
+static int ad_eq(const u8 *a, const volatile u8 *b, u32 n)
+{
+    for (u32 i = 0; i < n; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+/* The kernel's own view of physical memory, as level 19's mp_kview. The only place in this level that makes this call. */
+__attribute__((noinline)) static int ad_kview(int fd, u64 phys, u8 *out, u32 len)
+{
+    return sc(NR_pread64, fd, (i64)out, (i64)len, (i64)phys, 0, 0) == (i64)len;
+}
+
+/* The cache type register as this process reads it (Linux sets SCTLR_EL1.UCT, or answers the read itself). */
+__attribute__((noinline)) static u64 ad_ctr(void)
+{
+    u64 v;
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(v));
+    return v;
+}
+
+/* The code page, mapped read-write over part of a reservation at `va`. With level 19's sys_mmap_rw, the only writable mapping calls of this level. */
+__attribute__((noinline)) static i64 ad_map_code(int fd, u64 va)
+{
+    i64 r = sc(NR_mmap, (i64)va, (i64)AD_PAGE, 3 /* PROT_READ | PROT_WRITE */, 0x11 /* MAP_SHARED | MAP_FIXED */, fd, (i64)((u64)AVCAM_PHYS + AD_CODE_PAGE));
+    return (r < 0 && r > -4096) ? -1 : r;
+}
+
+/* The only place that makes the processors fetch the code sites afresh. `code` is the code page in this process. */
+__attribute__((noinline)) static void ad_sync(volatile u8 *code)
+{
+    for (u64 i = 0; i < AD_NC; i++) __asm__ volatile("dc cvau, %0" : : "r"(code + (ad_code[i].off - AD_CODE_PAGE)) : "memory");
+    __asm__ volatile("dsb ish" : : : "memory");
+    for (u64 i = 0; i < AD_NC; i++) __asm__ volatile("ic ivau, %0" : : "r"(code + (ad_code[i].off - AD_CODE_PAGE)) : "memory");
+    __asm__ volatile("dsb ish" : : : "memory");
+    __asm__ volatile("isb" : : : "memory");
+}
+
+static u8 ad_kpage[AD_PAGE];
+static u8 ad_do_c[16], ad_do_d[16];        /* per entry: 0 leave, 1 to write, 2 touched by this run */
+
+static int ad_refuse(const char *tag, u64 off, const char *why)
+{
+    puts_("!! "); puts_(tag); puts_(" "); ad_putx(off); puts_(": "); puts_(why); puts_("; nothing is written\n");
+    return 0;
+}
+
+/* A site: one aligned instruction or data word in the page. */
+static int ad_site_ok(const struct ad_site *e, u64 page)
+{
+    return e->kind && e->len == 4 && !(e->off & 3) && e->off >= page && e->off + 4 <= page + AD_PAGE;
+}
+
+/* Pass 1 for one table: nothing is written. Code: the whole page in both views, every byte outside the sites as in the file. Data: each entry
+ * in both views (the rest of a data page may change while it is read). Returns 0 after reporting the first thing that is not as it must be. */
+static int ad_pass1(const char *tag, const struct ad_site *t, u64 n, u8 *todo, const volatile u8 *mem, u64 page, int fd, u32 *n_todo)
+{
+    if (page == AD_CODE_PAGE) {
+        if (!ad_kview(fd, (u64)AVCAM_PHYS + page, ad_kpage, AD_PAGE)) return ad_refuse(tag, page, "the kernel's own view of the page cannot be read");
+        for (u64 k = 0; k < AD_PAGE; k++) {
+            int in_site = 0;
+            if (mem[k] != ad_kpage[k]) return ad_refuse(tag, page + k, "the kernel's own view differs from the mapping");
+            for (u64 i = 0; i < n; i++) if (page + k >= t[i].off && page + k < t[i].off + t[i].len) in_site = 1;
+            if (!in_site && ad_kpage[k] != ad_code_file[k]) return ad_refuse(tag, page + k, "is not as in the file");
+        }
+    }
+    for (u64 i = 0; i < n; i++) {
+        const struct ad_site *e = &t[i];
+        u8 kv[16];
+        todo[i] = 0;
+        if (e->len > 16 || e->off < page || e->off + e->len > page + AD_PAGE) return ad_refuse(tag, e->off, "lies outside its page");
+        if (e->kind && !ad_site_ok(e, page)) return ad_refuse(tag, e->off, "is not one aligned word");
+        if (page == AD_CODE_PAGE && !e->kind) return ad_refuse(tag, e->off, "a guard in the code page (the whole page is the guard)");
+        if (!ad_kview(fd, (u64)AVCAM_PHYS + e->off, kv, e->len)) return ad_refuse(tag, e->off, "the kernel's own view cannot be read");
+        if (!ad_eq(kv, mem + (e->off - page), e->len)) return ad_refuse(tag, e->off, "the kernel's own view differs from the mapping");
+        if (!e->kind) {
+            if (!ad_eq(e->stock, mem + (e->off - page), e->len)) return ad_refuse(tag, e->off, "is not as in the file");
+            continue;
+        }
+        if (ad_eq(AD_FROM(e), mem + (e->off - page), 4)) { todo[i] = 1; (*n_todo)++; puts_(tag); puts_(" site "); ad_putx(e->off); puts_(": as expected\n"); }
+        else if (ad_eq(AD_TO(e), mem + (e->off - page), 4)) { puts_(tag); puts_(" site "); ad_putx(e->off); puts_(": already holds the target bytes\n"); }
+        else return ad_refuse(tag, e->off, "holds neither set of bytes");
+    }
+    return 1;
+}
+
+static u32 ad_w32(const u8 *b) { return (u32)b[0] | (u32)b[1] << 8 | (u32)b[2] << 16 | (u32)b[3] << 24; }
+
+/* Both views hold `bytes`: the mapping, and the kernel's own. */
+static int ad_is(const volatile u8 *mem, u64 page, int fd, const struct ad_site *e, const u8 *bytes)
+{
+    u8 kv[4];
+    return ad_eq(bytes, mem + (e->off - page), 4) && ad_kview(fd, (u64)AVCAM_PHYS + e->off, kv, 4) && ad_eq(bytes, kv, 4);
+}
+
+/* The writes of one table: each marked site, one aligned 32-bit store, read back in both views. Returns 0 at the first that is not seen. */
+static int ad_write(const char *tag, const struct ad_site *t, u64 n, u8 *todo, volatile u8 *mem, u64 page, int fd)
+{
+    for (u64 i = 0; i < n; i++) {
+        const struct ad_site *e = &t[i];
+        if (todo[i] != 1) continue;
+        todo[i] = 2;                                   /* touched: the undo covers it even if the write is seen in one view only */
+        *(volatile u32 *)(mem + (e->off - page)) = ad_w32(AD_TO(e));
+        if (!ad_is(mem, page, fd, e, AD_TO(e))) {
+            puts_("!! "); puts_(tag); puts_(" site "); ad_putx(e->off); puts_(": the write is not seen both in the mapping and in the kernel's own view\n");
+            return 0;
+        }
+        puts_(tag); puts_(" site "); ad_putx(e->off); puts_(": written and read back\n");
+    }
+    return 1;
+}
+
+static int ad_undo(const char *tag, const struct ad_site *t, u64 n, const u8 *todo, volatile u8 *mem, u64 page, int fd)
+{
+    int ok = 1;
+    for (u64 i = 0; i < n; i++) {
+        const struct ad_site *e = &t[i];
+        if (todo[i] != 2) continue;
+        *(volatile u32 *)(mem + (e->off - page)) = ad_w32(AD_FROM(e));
+        if (ad_is(mem, page, fd, e, AD_FROM(e))) { puts_("undo "); puts_(tag); puts_(" site "); ad_putx(e->off); puts_(": put back\n"); }
+        else { puts_("!! undo "); puts_(tag); puts_(" site "); ad_putx(e->off); puts_(": NOT put back\n"); ok = 0; }
+    }
+    return ok;
+}
+
+static void ad_run(volatile u8 *code, volatile u8 *data, int fd)
+{
+    u32 n_todo = 0;
+    int ok;
+    if (!ad_pass1("code", ad_code, AD_NC, ad_do_c, code, AD_CODE_PAGE, fd, &n_todo)) return;
+    if (!ad_pass1("data", ad_data, AD_ND, ad_do_d, data, AD_DATA_PAGE, fd, &n_todo)) return;
+    puts_("checks passed: the code page is as in the file apart from the sites, every guard is as in the file, every site holds one of the two sets of bytes, "
+          "and the kernel's own view equals the mappings\n");
+    ad_sync(code);                                     /* the probe: on the sites as they are, before anything is written */
+    puts_("cache maintenance at the code sites: allowed (run once before any write)\n");
+    if (!n_todo) { puts_("NOTHING TO DO: every site already holds the target bytes (" AD_VERB ")\n"); return; }
+#if LEVEL == 29
+    ok = ad_write("code", ad_code, AD_NC, ad_do_c, code, AD_CODE_PAGE, fd);
+    ad_sync(code);
+    if (ok) {
+        puts_("instruction caches: the code sites cleaned and invalidated on every processor\n");
+        ok = ad_write("data", ad_data, AD_ND, ad_do_d, data, AD_DATA_PAGE, fd);
+    }
+#else
+    ok = ad_write("data", ad_data, AD_ND, ad_do_d, data, AD_DATA_PAGE, fd);
+    if (ok) {
+        ok = ad_write("code", ad_code, AD_NC, ad_do_c, code, AD_CODE_PAGE, fd);
+        ad_sync(code);
+        if (ok) puts_("instruction caches: the code sites cleaned and invalidated on every processor\n");
+    }
+#endif
+    if (ok) { puts_("DONE: every site holds the target bytes (" AD_VERB ")\n"); return; }
+
+    /* Something failed: put back every site this run touched, as a put back runs (data first, then code, then the caches). */
+    ok = ad_undo("data", ad_data, AD_ND, ad_do_d, data, AD_DATA_PAGE, fd);
+    ok = ad_undo("code", ad_code, AD_NC, ad_do_c, code, AD_CODE_PAGE, fd) && ok;
+    ad_sync(code);
+    puts_(!ok ? "UNDO INCOMPLETE: main-processor memory may be partly changed; cold boot the camera before anything else\n"
+              : "NOT DONE: a step failed; every site this run touched was put back\n");
+}
+
+static void level29(void)
+{
+    puts_("== level " RC_STR(LEVEL) ": " AD_VERB " the av-cam.bin code and data sites of " AD_DESIGN "\n");
+    copy_file(TEST_ROOT "/proc/cpuinfo", 8192);        /* for the record: which processors */
+    u64 ctr = ad_ctr();
+    u32 l1ip = (u32)(ctr >> 14) & 3;
+    puts_("CTR_EL0 "); ad_putx(ctr);
+    puts_(l1ip == 3 ? ": instruction cache PIPT\n" : l1ip == 2 ? ": instruction cache VIPT\n" : ": instruction cache neither PIPT nor VIPT\n");
+    if (l1ip < 2) { puts_("!! the instruction cache of this kind is not reached through another mapping; nothing is written\n"); return; }
+    i64 fd = sys_open(TEST_ROOT "/dev/mem", F_RDWR, 0);
+    if (fd < 0) { puts_("!! /dev/mem open failed "); putnum(fd); puts_("; nothing is written\n"); return; }
+    /* Address space for the code page: a reservation one page larger than AD_ALIGN, of which one page is then mapped over. */
+    i64 res = sc(NR_mmap, 0, (i64)(AD_ALIGN + AD_PAGE), 0 /* PROT_NONE */, 0x22 /* MAP_PRIVATE | MAP_ANONYMOUS */, -1, 0);
+    if (res < 0 && res > -4096) { puts_("!! no address space for the code page; nothing is written\n"); sys_close((int)fd); return; }
+    u64 want = (AD_KVA + AD_CODE_PAGE) & (AD_ALIGN - 1);
+    u64 va = (u64)res + ((want - (u64)res) & (AD_ALIGN - 1));
+    i64 c = ad_map_code((int)fd, va), d = -1;
+    if (c == -1 || (u64)c != va) puts_("!! the code page cannot be mapped at the address chosen; nothing is written\n");
+    else if (((u64)c ^ (AD_KVA + AD_CODE_PAGE)) & (AD_ALIGN - 1)) puts_("!! the code page's address does not keep the kernel's offset; nothing is written\n");
+    else if ((d = sys_mmap_rw((int)fd, AD_PAGE, (u64)AVCAM_PHYS + AD_DATA_PAGE)) == -1) puts_("!! the data page cannot be mapped; nothing is written\n");
+    else {
+        puts_("av-cam.bin at physical "); ad_putx((u64)AVCAM_PHYS); puts_("; code page "); ad_putx(AD_CODE_PAGE); puts_(" (kernel "); ad_putx(AD_KVA + AD_CODE_PAGE);
+        puts_(") mapped at "); ad_putx((u64)c); puts_(", data page "); ad_putx(AD_DATA_PAGE); puts_(" at "); ad_putx((u64)d); puts_("\n");
+        ad_run((volatile u8 *)c, (volatile u8 *)d, (int)fd);
+    }
+    if (d != -1) sys_munmap((void *)d, AD_PAGE);
+    sys_munmap((void *)res, AD_ALIGN + AD_PAGE);           /* the code page's mapping goes with the reservation */
+    sys_close((int)fd);
+}
+#endif
+
 /* ------------------------------------------------------------------ levels 23 to 25: sites in copies of the codec firmware, main processor */
 
 #if LEVEL >= 23 && LEVEL <= 25
@@ -2624,6 +2886,72 @@ static void level24(void)
 #endif
 #endif
 
+/* ------------------------------------------------------------------ level 31: spans of DRAM (a picture buffer), read-only */
+
+/* After a recording the encoder's per-picture buffers (the codec's 'original0' pictures, in DMM blocks of DRAM) still hold the last
+ * pictures until something else uses that memory. This level copies fixed spans of them out, nothing else: the span table comes from
+ * a design (gen_expected.py --dump <name>, which checks each span against the main processor's DmmCfg). Every span is checked before
+ * anything is read: 64-byte aligned, inside DRAM 0x400000000-0x4ffffffff, at most 256 KB, at most 1.5 MB in all; otherwise nothing is
+ * read. /dev/mem is opened read-only with O_SYNC as levels 22 and 26 open it, so a mapping is uncached (or device memory where the
+ * kernel has no linear map); each span is copied with aligned 64-bit loads into a 4 KB buffer of this file, and only that buffer is
+ * written out, so the kernel never copies from the mapping itself. No codec register, no write mapping, no other file. */
+#if LEVEL == 31
+#ifndef DUMP_H
+#error "level 31 needs -DDUMP_H=\"expected_dump_<name>.h\" (gen_expected.py --dump <name>)"
+#endif
+#include DUMP_H                            /* DUMP_DESIGN, struct dump_span { u64 phys; u32 len; u32 block; const char *what; }, dump_spans[] */
+#define D_SYNC     (0 | 0x101000)          /* O_RDONLY | O_SYNC */
+#define D_DRAM_LO  0x400000000UL
+#define D_DRAM_HI  0x500000000UL
+#define D_SPAN_MAX 0x40000UL               /* 256 KB a span */
+#define D_ALL_MAX  0x180000UL              /* 1.5 MB in all */
+#define D_N (sizeof dump_spans / sizeof dump_spans[0])
+_Static_assert(D_N >= 1 && D_N <= 64, "a short span table");
+
+static u64 d_buf[512];                     /* 4 KB */
+
+static void d_x64(u64 v) { u8 b[8]; for (int i = 0; i < 8; i++) b[i] = (u8)(v >> (8 * (7 - i))); puts_("0x"); puthex(b, 8); }
+
+static void level31(void)
+{
+    puts_("== level 31: spans of DRAM, read-only (" DUMP_DESIGN ")\n");
+    u64 all = 0;
+    for (u64 k = 0; k < D_N; k++) {
+        const struct dump_span *s = &dump_spans[k];
+        if (s->phys < D_DRAM_LO || s->phys >= D_DRAM_HI || s->len > D_DRAM_HI - s->phys || (s->phys & 63) || !s->len || (s->len & 63)
+            || s->len > D_SPAN_MAX) {
+            puts_("!! span "); putnum((i64)k); puts_(" is not a 64-byte aligned piece of DRAM of at most 256 KB; nothing is read\n");
+            puts_("== level 31 verdict: NOTHING READ\n");
+            return;
+        }
+        all += s->len;
+    }
+    if (all > D_ALL_MAX) { puts_("!! the spans add up to more than 1.5 MB; nothing is read\n== level 31 verdict: NOTHING READ\n"); return; }
+    i64 fd = sys_open(TEST_ROOT "/dev/mem", D_SYNC, 0);          /* read-only: this descriptor cannot be mapped for writing */
+    if (fd < 0) { puts_("!! /dev/mem open failed "); putnum(fd); puts_("\n== level 31 verdict: NOTHING READ\n"); return; }
+    u64 got = 0;
+    for (u64 k = 0; k < D_N; k++) {
+        const struct dump_span *s = &dump_spans[k];
+        u64 page = s->phys & ~0xFFFUL, lead = s->phys - page, maplen = (lead + s->len + 0xFFFUL) & ~0xFFFUL;
+        puts_("== span "); putnum((i64)k); puts_(" block "); putnum((i64)s->block); puts_(" "); puts_(s->what); puts_(" phys "); d_x64(s->phys);
+        i64 m = sys_mmap_ro((int)fd, maplen, page);
+        if (m == -1) { puts_("\n!! mmap failed\n"); continue; }
+        puts_(" raw "); putnum((i64)s->len); puts_(" bytes follow\n");
+        for (u64 off = 0; off < s->len; off += sizeof d_buf) {
+            u64 n = s->len - off < sizeof d_buf ? s->len - off : sizeof d_buf;
+            const volatile u64 *src = (const volatile u64 *)(m + (i64)(lead + off));
+            for (u64 w = 0; w < n / 8; w++) d_buf[w] = src[w];
+            put(d_buf, n);
+        }
+        puts_("\n== span end\n");
+        sys_munmap((void *)m, maplen);
+        got++;
+    }
+    sys_close((int)fd);
+    puts_("== level 31 verdict: "); putnum((i64)got); puts_(" of "); putnum((i64)D_N); puts_(" spans read\n");
+}
+#endif
+
 /* ------------------------------------------------------------------ entry */
 
 static void run(void)
@@ -2686,6 +3014,12 @@ static void run(void)
 #endif
 #if LEVEL == 27
     level27();
+#endif
+#if LEVEL == 29 || LEVEL == 30
+    level29();
+#endif
+#if LEVEL == 31
+    level31();
 #endif
     puts_("== done, bytes written before this line: "); putnum((i64)out_total); puts_("\n");
     if (out_fd >= 0) sys_close(out_fd);

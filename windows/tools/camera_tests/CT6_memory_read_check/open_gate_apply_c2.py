@@ -65,6 +65,11 @@ OUT_57 = step(16, "og57cp_c2_v3", "four scaler units, a buffer for the output pi
 ENC_HS_S = step(19, "ogfile2560_hs_s_c2_v1", "the encoder side for XAVC HS 4K and XAVC S 4K")
 ENC_57_300 = step(19, "ogfile57r300_c2_v1", "the encoder side for 5760x3840 with the 100M record settings at 300 Mbps")
 ENC_57 = step(19, "ogfile57_c2_v1", "the encoder side for 5760x3840 at the menu's own bit rate")
+# 2026-11-25, the A7 IV's metadata fix (F987, F989): the MP4 headers (tkhd, stsd and Sony's PROF box) state the real size. Default; --no-meta
+# gives the steps above. The 5.7K one is the A7 IV's 5.7K step 4 (ogfile57r300m1_v4): also I and P pictures only (no duplicate frames, F981/F986)
+# and the HEVC edit list at 0 (first picture shown). Sony's XML in the file still says 3840x2160, 16:9, as on the A7 IV.
+ENC_HS_S_META = step(19, "ogfile2560_hs_s_c2_v2", "the encoder side for XAVC HS 4K and XAVC S 4K, the MP4 headers saying 3840x2560")
+ENC_57_META = step(19, "ogfile57r300m1_c2_v4", "the encoder side for 5760x3840 at 300 Mbps on the 100M settings, I and P pictures only, the MP4 headers saying 5760x3840")
 LCD_32 = step(16, "lcdfill_c2_v2", "the rear screen at 3:2 with the focus frames")
 CYCLE = step(19, "lcdcycle_c2_v1", "the C2 key steps the rear-screen preview 3:2 -> 2:1 -> 2.4:1 -> 3:2 in movie mode") if (19, "lcdcycle_c2_v1") in P.PINS else None
 PAL = {"ogsq_c2_v1": step(5, "ogsq880_c2_v1", "the full-height picture, every sensor row, in drive mode 0x880 (camera set to PAL, 25p)"),
@@ -73,13 +78,16 @@ RATE = {"NTSC": "24p", "PAL": "25p"}
 BOTH = "XAVC HS 4K or XAVC S 4K"
 SCREEN = [LCD_32] + ([CYCLE] if CYCLE else [])
 STATES = {
-    "default": {"steps": [DMM, PIC, OUT_2560, ENC_HS_S] + SCREEN, "formats": BOTH, "size": "3840x2560",
+    "default": {"steps": [DMM, PIC, OUT_2560, ENC_HS_S_META] + SCREEN, "formats": BOTH, "size": "3840x2560",
                 "title": "Open gate for the Sony A7C II: a 3840x2560 recording of the whole 3:2 sensor area (UNTESTED on an A7C II)",
                 "notes": ["The rear screen shows the whole picture at 3:2 while shooting; every 16:9 picture on the rear screen fills it too. The file is",
-                          "3840x2560 and plays back in the camera at 3:2."]},
-    "real57": {"steps": [DMM, PIC_57N, OUT_57, ENC_57_300] + SCREEN, "formats": "XAVC HS 4K", "size": "5760x3840",
+                          "3840x2560 and plays back in the camera at 3:2. Its MP4 headers say 3840x2560 (editors show 3:2 without a remux).",
+                          "Sony's own XML block in the file still says 3840x2160, 16:9 (as on the A7 IV). --no-meta: headers say 3840x2160."]},
+    "real57": {"steps": [DMM, PIC_57N, OUT_57, ENC_57_META] + SCREEN, "formats": "XAVC HS 4K", "size": "5760x3840",
                "title": "Open gate for the Sony A7C II: a real 5760x3840 recording of the whole 3:2 sensor area (UNTESTED on an A7C II)",
-               "notes": ["The file is 5760x3840 with real detail (on the A7 IV: F906). Its container header says 3840x2160; the picture inside is 5760x3840.",
+               "notes": ["The file is 5760x3840 with real detail (on the A7 IV: F906). Its MP4 headers say 5760x3840 (Sony's XML block still 3840x2160).",
+                         "I and P pictures only (no duplicate frames) and the first picture shown, as the A7 IV's 5.7K step. It does not play in the camera.",
+                         "--no-meta gives the earlier step (headers 3840x2160, B pictures).",
                          "The record settings marked 100M record at about 300 Mbps (peaks to 340). The menu and the remaining time still say 100M:",
                          "the card fills three times as fast as shown. Use a fast card (about 40 MB a second: SD V60 / V90).",
                          "--rate100 gives the encoder step with the menu's own bit rate.",
@@ -237,6 +245,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--real57", action="store_true", help="the real 5760x3840 state: first scaler 5760x3840, XAVC HS 4K at 24p, 300 Mbps on the 100M settings")
     ap.add_argument("--rate100", action="store_true", help="5.7K: the encoder step at the menu's own bit rate instead of 300 Mbps on the 100M settings")
+    ap.add_argument("--no-meta", action="store_true", help="the encoder step without the MP4 header size: the headers say 3840x2160 as the camera's own (4K: ogfile2560_hs_s_c2_v1; 5.7K: ogfile57r300_c2_v1)")
     ap.add_argument("--no-cycle", action="store_true", help="leave out the C2 preview cycle: C2 keeps its own function in movie mode")
     ap.add_argument("--no-lcd32", action="store_true", help="leave out the rear-screen steps: live view squeezed in a 16:9 letterbox")
     ap.add_argument("--putback", action="store_true", help="put the state back step by step instead of a cold boot (the screen preview must be at 3:2)")
@@ -251,8 +260,10 @@ def main():
         steps = [x for x in steps if x not in (LCD_32, CYCLE)]
     if args.no_cycle:
         steps = [x for x in steps if x != CYCLE]
+    if args.no_meta:
+        steps = [{ENC_HS_S_META: ENC_HS_S, ENC_57_META: ENC_57_300}.get(x, x) for x in steps]
     if args.rate100:
-        steps = [ENC_57 if x == ENC_57_300 else x for x in steps]
+        steps = [ENC_57 if x in (ENC_57_300, ENC_57_META) else x for x in steps]
     if args.ntsc and args.pal:
         raise SystemExit("--ntsc and --pal do not go together. Nothing was sent.")
     if args.dry_run or args.selftest:

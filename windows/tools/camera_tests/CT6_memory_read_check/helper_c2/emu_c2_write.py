@@ -328,7 +328,7 @@ def main():
                                  + b"%x-%x r-xp 00000000 fc:8f 55354                          /usr/lib/libmpr.so\n" % (LM_AT, LM_AT + lspan)
                                  + b"%x-%x ---p %08x fc:8f 55354                          /usr/lib/libmpr.so\n" % (LM_AT + lspan, LM_AT + lspan + 0x10000, lspan)
                                  + b"7f8b936000-7f8b991000 r-xp 00000000 fc:8f 55344                          /usr/lib/libsencore.so\n")
-    for name in ("ogfile2560_hs_s_c2_v1", "ogfile57r300_c2_v1", "ogfile57_c2_v1"):
+    for name in ("ogfile2560_hs_s_c2_v1", "ogfile57r300_c2_v1", "ogfile57_c2_v1", "ogfile2560_hs_s_c2_v2", "ogfile57r300m1_c2_v4"):
         fl = design(name)
         sts = {"av-cam.bin": [], "libmpr.so": []}
         for p in fl["patches"]:

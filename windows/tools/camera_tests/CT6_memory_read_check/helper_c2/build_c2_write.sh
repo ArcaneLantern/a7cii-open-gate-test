@@ -29,7 +29,7 @@ for D in outsz2560_c2_v1 og57cp_c2_v3 lcdfill_c2_v2; do
     "${CC[@]}" -DLEVEL=$L "-DWORDS_H=\"expected_words_$D.h\"" readcheck.c "$SEN" -o "$H/libJit_c2_level${L}_$D.so"; OUT+=("level${L}_$D")
   done
 done
-MPS=(ogfile2560_hs_s_c2_v1 ogfile57r300_c2_v1 ogfile57_c2_v1)
+MPS=(ogfile2560_hs_s_c2_v1 ogfile57r300_c2_v1 ogfile57_c2_v1 ogfile2560_hs_s_c2_v2 ogfile57r300m1_c2_v4)
 if [ -f expected_mp_lcdcycle_c2_v1.h ]; then MPS+=(lcdcycle_c2_v1); fi
 for D in "${MPS[@]}"; do
   for L in 19 20; do
