@@ -6,6 +6,8 @@
 #
 #   nix-shell linux/shell.nix
 #
+# `nix develop linux/` (linux/flake.nix, which wraps this file) brings the same shell with
+# nixpkgs pinned by linux/flake.lock instead of this machine's <nixpkgs>.
 # linux/setup.sh, run.sh and the four launchers put themselves inside this shell when they
 # find /nix/store and nix-shell (IN_NIX_SHELL stops a second entry), so nothing needs
 # entering by hand on NixOS; on other distributions nothing changes. The pinned Python

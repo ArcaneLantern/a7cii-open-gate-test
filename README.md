@@ -61,10 +61,10 @@ Privacy & Security > Open Anyway.
 Once: install Python 3 (3.9 or later) and libusb with the distribution's package manager (Debian/Ubuntu: `python3`, `libusb-1.0-0`;
 Fedora: `python3`, `libusb1`), then run `linux/setup.sh`. On NixOS nothing is installed by hand: `setup.sh`, `run.sh` and the
 launchers put themselves inside the Nix shell of `linux/shell.nix` (Python 3 and libusb from nixpkgs, the library path set —
-NixOS has no ldconfig cache, so Python cannot find libusb without it). Then run a launcher, e.g. `linux/open_gate_4k.sh` (make
-it executable first: `chmod +x linux/*.sh`); it asks for your password: unmounting the camera's card and taking it over from
-Linux's own usb-storage driver need admin rights. No driver is installed. The sessions are in `windows/camera_private`, as on
-Windows and macOS.
+NixOS has no ldconfig cache, so Python cannot find libusb without it); `nix develop linux/` (`linux/flake.nix`, nixpkgs pinned
+by `linux/flake.lock`) brings the same shell. Then run a launcher, e.g. `linux/open_gate_4k.sh` (make it executable first:
+`chmod +x linux/*.sh`); it asks for your password: unmounting the camera's card and taking it over from Linux's own usb-storage
+driver need admin rights. No driver is installed. The sessions are in `windows/camera_private`, as on Windows and macOS.
 
 ## Android
 
