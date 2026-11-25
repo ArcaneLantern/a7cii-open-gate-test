@@ -144,7 +144,7 @@ def libusb_devices():
 
 
 def wait_for_service_device(session):
-    for _ in range(10):
+    for _ in range(60):                                    # 30 s: the first switch after a cold boot can take seconds
         time.sleep(0.5)
         try:
             _msc, senser = libusb_devices()
@@ -208,7 +208,7 @@ def connect(session):
                 raise c.StopTest("EXPECTED on a first run: the camera is in service mode (054C:0336) but that "
                                  "device has no libusb driver yet. Leave the camera connected and on, install "
                                  "libusb-win32 for it with Zadig, then run this command again")
-            raise c.StopTest("the camera did not come back as a service device within 5 seconds")
+            raise c.StopTest("the camera did not come back as a service device within 30 seconds")
     from pmca.usb.driver.generic import libusb
     session.results["service_interface_class"] = 255         # it was listed by interface class 255
     session.say("Found a camera in service mode")
