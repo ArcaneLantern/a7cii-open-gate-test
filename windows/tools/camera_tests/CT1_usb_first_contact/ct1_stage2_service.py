@@ -135,7 +135,9 @@ def libusb_devices():
             raise c.StopTest("pyusb found no libusb library. Run macos/setup.command again (it installs libusb-package)")
         if sys.platform.startswith("linux"):
             raise c.StopTest("pyusb found no libusb library. Install the distribution's own libusb "
-                             "(Debian/Ubuntu: libusb-1.0-0, Fedora: libusb1, Arch: libusb), then run again")
+                             "(Debian/Ubuntu: libusb-1.0-0, Fedora: libusb1, Arch: libusb), then run again; "
+                             "on NixOS the launchers bring it themselves (linux/shell.nix): run them outside "
+                             "the launchers only inside nix-shell linux/shell.nix")
         raise c.StopTest("pyusb found no libusb library. The libusb-win32 driver is not installed yet: "
                          "do the Zadig step for the camera in Mass Storage mode, then run again")
     return msc, [d for d in vendor if d.idProduct in SENSER_PIDS]
