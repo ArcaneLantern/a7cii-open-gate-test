@@ -66,6 +66,28 @@ by `linux/flake.lock`) brings the same shell. Then run a launcher, e.g. `linux/o
 `chmod +x linux/*.sh`); it asks for your password: unmounting the camera's card and taking it over from Linux's own usb-storage
 driver need admin rights. No driver is installed. The sessions are in `windows/camera_private`, as on Windows and macOS.
 
+## APS-C 3:2 4K 59.94p (macOS, experimental)
+
+3840x2560 at 59.94p (NTSC) from the APS-C / Super 35 area of the sensor: 4608x3072 read out, scaled to 3840x2560,
+true 3:2 with no squeeze. Tested on one A7C II only (firmware 2.01, NTSC, macOS). Same rules as the rest of the kit:
+memory only, each step checks the stock bytes first, a cold boot puts the camera back.
+
+- `macos/OpenGate_APSC60.command`: all 5 steps in one service-mode session (about 5 seconds, no replugs). Bit rates
+  are raised 1.20x to match stock 16:9 density (200M -> 240M, 150M -> 180M, ...): use a V60 or V90 card.
+- `macos/OpenGate_APSC60_StockBitrate.command`: the same, at the menu's bit rates.
+- `macos/Test_APSC60_Phase2A.command`: the sensor and scaler step on its own.
+
+Steps: `apsc60_p2a_v3` (sensor and scaler tables for all four col-14 modes, 45 sites), `outsz2560_c2_v1`,
+`ogfile2560_60p_r240_c2_v1` or `ogfile2560_60p_c2_v1` (2-core 59.94p encoder, 16 descriptors, plus 4 libmpr.so sites),
+`lcdfill_c2_v2`, `lcdcycle_c2_v1`. Before running: cold boot, stills, Mass Storage. Afterwards: Movie, APS-C/Super 35 on,
+XAVC HS 4K or XAVC S 4K, **60p only**. Options: `--menu-rate`, `--putback`, `--no-cycle`, `--no-lcd32`, `--remove-only`,
+`--dry-run`, `--selftest`.
+
+The `.so` files in `macos/apsc60_phase2a/` and `macos/apsc60_phase2b/` are SHA-256 pinned in their
+runners. The Phase 2B libraries were built from `helper/readcheck.c` as of aa38526; rebuilding with the current
+`readcheck.c` gives different hashes, so update the pins if you rebuild. The generators and `test_*_sim.py` read the
+unpacked 2.01 firmware from `windows/camera_private/extracted_a7c2_201/` (not included).
+
 ## Android
 
 USB-C to C cable and a phone with USB OTG. Camera on stills, Mass Storage, then pick 4K or 5.7K and tap Apply.
