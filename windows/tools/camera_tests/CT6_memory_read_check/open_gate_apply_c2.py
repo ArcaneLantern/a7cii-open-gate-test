@@ -42,6 +42,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MAP = HERE.parents[1]
 RUNNER = HERE / "c2_level_run.py"
+REMOVE_LIBRARY = None                    # --remove-library: passed on to every step's run
 LISTER = MAP / "camera_tests" / "CT1_usb_first_contact" / "ct1_stage2_service.py"
 PRIVATE = MAP.parent / "camera_private"
 sys.path.insert(0, str(HERE))
@@ -206,6 +207,8 @@ def run_step(n, total, level, design, sha, facts_key, what, firmware, clear):
     cmd = [sys.executable, "-I", "-B", str(RUNNER), "--go", "--level", str(level), "--design", design, "--firmware-shown", firmware, "--library-sha256", sha]
     if clear:
         cmd += ["--clear-result", clear]
+    if REMOVE_LIBRARY:
+        cmd += ["--remove-library", REMOVE_LIBRARY]
     folder = None
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf8", errors="replace", cwd=str(MAP))
     for line in p.stdout:
@@ -257,7 +260,14 @@ def main():
     ap.add_argument("--pal", action="store_true", help="the camera's NTSC/PAL Selector is on PAL (25p, XAVC S 4K): step 2 is the design for drive mode 0x880")
     ap.add_argument("--dry-run", action="store_true", help="show what each step would send, on a simulated camera; nothing is sent")
     ap.add_argument("--selftest", action="store_true", help="run each step's self-test on a simulated camera; nothing is sent")
+    ap.add_argument("--remove-library", metavar="SHA256", help="a libJit.so left on the camera's service partition that is none of this kit's: delete it first, "
+                                                               "only if its SHA-256 is this (a library of this kit is deleted without being named)")
     args = ap.parse_args()
+    global REMOVE_LIBRARY
+    if args.remove_library:
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", args.remove_library):
+            raise SystemExit("--remove-library takes the 64 hexadecimal digits of the file's SHA-256 (the stopped run prints them). Nothing was sent.")
+        REMOVE_LIBRARY = args.remove_library.lower()
     st = STATES["real57" if args.real57 else "default"]
     steps, formats, size = st["steps"], st["formats"], st["size"]
     if args.no_lcd32:

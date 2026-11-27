@@ -57,22 +57,99 @@ PINS = {
     (20, "lcdcycle_c2_v1"): "c5006d19529ad9bc30c7216dd4e5f02695bc8f01a509a0ec7caf21f434f5a212",
 }
 C2 = HERE / "helper_c2"
+# 2026-11-27, the FX3 kit's fix (2026-11-26): a session cut off after its write (camera restart, cable, Ctrl+C) leaves its library on the
+# service partition, which is flash: it survives a cold boot, and every later step refused to go on. Every library of this kit is one a run
+# may delete (R.KNOWN_LIBS) before it goes on; --remove-library names one more file by its SHA-256 (the stopped run prints it).
+EXTRA_LIBS = {}
+REMOVE_HINT = "run the launcher again with --remove-library and that SHA-256"
 
 
 def library_file(level, design):
     return C2 / ("libJit_c2_level%d_%s.so" % (level, design))
 
 
+def known_libs():
+    out = {sha: "this kit's level %d library (%s)" % (level, design) for (level, design), sha in PINS.items()}
+    out.update(EXTRA_LIBS)
+    return out
+
+
 def install():
     """Point the A7 IV runner at the A7C II: its designs and pins, its firmware version, a canned helper on the simulated camera."""
+    global _selftest
     R.DESIGN_LIBS = {}                               # only the A7C II's: an A7 IV design name is refused by --design
     for (level, design), sha in PINS.items():
         R.DESIGN_LIBS.setdefault(design, {})[level] = ("../helper_c2/" + library_file(level, design).name, sha)
     c.EXPECTED_FIRMWARE = FIRMWARE
     R.run_helper = lambda data: (R.canned_result(), "canned")
+    R.KNOWN_LIBS = known_libs()
+    R.REMOVE_HINT = REMOVE_HINT
+    if R.selftest is not selftest:
+        _selftest, R.selftest = R.selftest, selftest
+
+
+_selftest = None
+
+
+def selftest(lib):
+    """The A7 IV runner's self-test, then the left-library cases on the simulated camera (a live run runs it first, as R.main does).
+    The runner's own cases expect a library already on the camera to stop the run, as it does with no list: they run with the list empty."""
+    saved = dict(R.KNOWN_LIBS)
+    R.KNOWN_LIBS.clear()
+    try:
+        done = _selftest(lib)
+    finally:
+        R.KNOWN_LIBS.update(saved)
+
+    def check(cond, what):
+        if not cond:
+            raise AssertionError("self-test failed: " + what)
+        done.append(what)
+
+    W, D = "SET_FILE2", "FILE_DELETE2"
+    lp = R.LIB_PATH.decode()
+    other = next(library_file(lv, d).read_bytes() for (lv, d), sha in sorted(PINS.items()) if sha != R.LIB_SHA256)
+    for left, what in ((other, "another step's library"), (lib, "this step's own library")):
+        s, sim, stopped = R.simulate(lib, R.body_run, files={lp: left})
+        names, lr = R.sent(s), s.results["ct6"].get("leftover_removed") or {}
+        check(not stopped and not sim.unexpected and names.count(D) == 2 and names.count(W) == 1 and names.index(D) < names.index(W) and lp not in sim.fs
+              and sim.loads == 1 and lr.get("gone") and lr.get("sha256") == c.sha256(left) and s.results["ct6"]["library_on_camera_after"] is False,
+              "%s left on the camera: deleted first, then the normal run (one write, loaded once, gone afterwards)" % what)
+    s, sim, stopped = R.simulate(lib, R.body_run, files={lp: other}, fault="sticky")
+    check(stopped and W not in R.sent(s) and R.sent(s).count(D) == 1 and sim.fs.get(lp) == other, "a left library the camera will not delete: stops, nothing written")
+    s, sim, stopped = R.simulate(lib, R.body_run, files={lp: b"someone else's"})
+    check(stopped and W not in R.sent(s) and D not in R.sent(s) and c.sha256(b"someone else's") in stopped and "--remove-library" in stopped,
+          "a file that is none of this kit's: stops, nothing deleted, its SHA-256 and --remove-library are shown")
+    named = b"a file named with --remove-library"
+    saved = dict(R.KNOWN_LIBS)
+    try:
+        R.KNOWN_LIBS[c.sha256(named)] = "the file named with --remove-library"
+        s, sim, stopped = R.simulate(lib, R.body_run, files={lp: named})
+        check(not stopped and R.sent(s).count(D) == 2 and R.sent(s).count(W) == 1 and lp not in sim.fs, "--remove-library with the file's SHA-256: deleted, then the normal run")
+    finally:
+        R.KNOWN_LIBS.clear()
+        R.KNOWN_LIBS.update(saved)
+    s, sim, stopped = R.simulate(lib, R.body_remove_only, files={lp: other})
+    check(not stopped and R.sent(s).count(D) == 1 and W not in R.sent(s) and lp not in sim.fs, "--remove-only: deletes another step's library of this kit too, writes nothing")
+    check(all(sha in R.KNOWN_LIBS for sha in PINS.values()), "every library of this kit (%d) is one a run may delete" % len(PINS))
+    return done
+
+
+def take_remove_library(argv):
+    """--remove-library SHA256 out of argv (the A7 IV runner has no such option): that file becomes one a run may delete."""
+    import re
+    if "--remove-library" not in argv:
+        return argv
+    i = argv.index("--remove-library")
+    value = argv[i + 1] if i + 1 < len(argv) else ""
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise SystemExit("--remove-library takes the 64 hexadecimal digits of the file's SHA-256 (the stopped run prints them). Nothing was sent.")
+    EXTRA_LIBS[value.lower()] = "the file named with --remove-library"
+    return argv[:i] + argv[i + 2:]
 
 
 if __name__ == "__main__":
+    sys.argv = take_remove_library(sys.argv)
     install()
     if "--design" not in sys.argv or sys.argv[sys.argv.index("--design") + 1:][:1] == ["og4k_data_v1"]:
         raise SystemExit("--design must name one of the A7C II designs: %s. Nothing was sent." % ", ".join(sorted({d for _, d in PINS})))

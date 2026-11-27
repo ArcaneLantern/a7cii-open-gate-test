@@ -187,7 +187,7 @@ def connect(session):
         inner = libusb.MscContext().openDevice(msc[0])
         if sys.platform == "darwin":
             take_over_from_macos(session, inner)
-        elif sys.platform.startswith("linux"):
+        elif sys.platform.startswith("linux") and c.OS_NAME != "Android":     # the Android app has no usb-storage driver to take over
             take_over_from_linux(session, inner)
         session.log("note", text="SCSI TEST UNIT READY and INQUIRY through PMCA-RE MscDevice")
         info = MscDevice(inner).getDeviceInfo()
