@@ -1,6 +1,7 @@
 # Written by the publish script. Everything here is local and never published.
 windows/.venv/
 macos/.venv/
+linux/.venv/
 windows/camera_private/
 __pycache__/
 *.pyc

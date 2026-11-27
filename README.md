@@ -30,6 +30,7 @@ the camera's own headers (3840x2160). 5.7K files do not play back in the camera.
 
 - `windows/open_gate_4k.cmd`, `windows/open_gate_5.7k.cmd`: apply. `windows/open_gate_putback_4k.cmd`, `..._5.7k.cmd`: put back step by step (a cold boot does the same).
 - `macos/*.command`: the same four on a Mac.
+- `linux/*.sh`: the same four on Linux.
 - `android/A7CII-OpenGate.apk`: the phone app (USB-C to the camera), when published.
 
 Options (add them after the launcher name in a command window): `--ntsc`, `--pal`, `--no-cycle` (C2 keeps its own function),
@@ -54,6 +55,16 @@ Storage; again once it has switched to service mode). Then run a launcher.
 Once: double-click `macos/setup.command` (Python 3.9 or later; no Homebrew, no driver). Then double-click a launcher; it asks for
 your password to take the camera over from macOS's own USB driver. If macOS refuses to open a .command file, use System Settings >
 Privacy & Security > Open Anyway.
+
+## Linux
+
+Once: install Python 3 (3.9 or later) and libusb with the distribution's package manager (Debian/Ubuntu: `python3`, `libusb-1.0-0`;
+Fedora: `python3`, `libusb1`), then run `linux/setup.sh`. On NixOS nothing is installed by hand: `setup.sh`, `run.sh` and the
+launchers put themselves inside the Nix shell of `linux/shell.nix` (Python 3 and libusb from nixpkgs, the library path set —
+NixOS has no ldconfig cache, so Python cannot find libusb without it); `nix develop linux/` (`linux/flake.nix`, nixpkgs pinned
+by `linux/flake.lock`) brings the same shell. Then run a launcher, e.g. `linux/open_gate_4k.sh` (make it executable first:
+`chmod +x linux/*.sh`); it asks for your password: unmounting the camera's card and taking it over from Linux's own usb-storage
+driver need admin rights. No driver is installed. The sessions are in `windows/camera_private`, as on Windows and macOS.
 
 ## Android
 

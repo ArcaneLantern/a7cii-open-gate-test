@@ -172,10 +172,14 @@ def last_result_sha():
 
 
 def outcome(folder, facts_key):
+    man = None
     try:
         man = json.loads((Path(folder) / "manifest.json").read_text(encoding="utf8"))
         ct6 = man["results"]["ct6"]
     except (OSError, KeyError, TypeError, ValueError) as e:
+        why = man.get("error") if isinstance(man, dict) else None      # the run can stop before a step began
+        if why:
+            return False, "the run stopped before the step began (%s)" % why, None
         return False, "the session's record could not be read (%s)" % e, None
     res = ct6.get("result") or {}
     f = res.get(facts_key) or {}

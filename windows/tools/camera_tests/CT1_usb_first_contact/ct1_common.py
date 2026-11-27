@@ -12,6 +12,7 @@ Run every CT1 script with the camera environment, isolated:
 import hashlib
 import json
 import plistlib
+import re
 import struct
 import subprocess
 import sys
@@ -186,13 +187,15 @@ def mask_serial(serial):
     return ("***" + serial[-2:]) if serial and len(serial) > 2 else "***"
 
 
-OS_NAME = {"win32": "Windows", "darwin": "macOS"}.get(sys.platform, sys.platform)
+OS_NAME = {"win32": "Windows", "darwin": "macOS", "linux": "Linux"}.get(sys.platform, sys.platform)
 
 
 def pnp_sony_devices():
     """Sony USB devices the OS shows as present, with class and driver service. Read-only."""
     if sys.platform == "darwin":
         return ioreg_sony_devices()
+    if sys.platform.startswith("linux"):
+        return sysfs_sony_devices()
     command = ("Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -match 'VID_054C' } | "
                "Select-Object PNPDeviceID, PNPClass, Name, Service, Status | ConvertTo-Json -Compress")
     try:
@@ -239,6 +242,117 @@ def _walk(node):
         yield from _walk(child)
 
 
+SYSFS_USB = Path("/sys/bus/usb/devices")     # one entry per USB device and per interface, e.g. "1-2" and "1-2:1.0"
+SYSFS_BLOCK = Path("/sys/class/block")       # one symlink per whole disk and per partition
+MOUNTS = Path("/proc/self/mounts")           # one line per mount: device, mountpoint, filesystem, ...
+
+
+def _sysfs_read(path):
+    """One sysfs file's text, trimmed (its last byte is a newline)."""
+    return path.read_text(encoding="utf8", errors="replace").strip()
+
+
+def _sysfs_optional(path):
+    try:
+        return _sysfs_read(path)
+    except OSError:
+        return None
+
+
+def sysfs_sony_devices():
+    """Sony USB devices Linux shows in /sys/bus/usb: the interface classes, the drivers bound to
+    the interfaces, and the whole disks under the device (the memory card in Mass Storage mode).
+    Read-only, as the I/O Registry listing is on macOS, and no external tool is needed: `lsusb`
+    shows less, and usbutils may not be installed.
+
+    `/sys/bus/usb/devices/X-Y` is a symlink into /sys/devices; `X-Y:1.0` and its kin are the
+    interfaces under it, each with a `driver` symlink when a kernel driver is bound. A whole disk
+    (never its partitions) is found by resolving /sys/class/block and keeping what sits under the
+    device it belongs to.
+    """
+    rows = []
+    try:
+        entries = sorted(SYSFS_USB.iterdir())
+    except OSError as exc:                    # listing is evidence only; never fatal
+        return [{"error": str(exc)}]
+    try:
+        blocks = sorted(SYSFS_BLOCK.iterdir())
+    except OSError:
+        blocks = []
+    for dev in (p for p in entries if ":" not in p.name):       # "1-2" is a device; "1-2:1.0" an interface
+        vid = _sysfs_optional(dev / "idVendor")
+        try:
+            if vid is None or int(vid, 16) != SONY_VID:
+                continue
+            pid = int(_sysfs_read(dev / "idProduct"), 16)
+        except (OSError, ValueError):
+            continue                           # not a USB device with the usual sysfs files
+        usb = dev.resolve()
+        classes, drivers, disks = [], [], []
+        for interface in (p for p in entries if p.name.startswith(dev.name + ":")):
+            value = _sysfs_optional(interface / "bInterfaceClass")
+            try:
+                classes.append(str(int(value, 16)))
+            except (TypeError, ValueError):
+                pass
+            if (interface / "driver").exists():
+                drivers.append((interface / "driver").resolve().name)
+        for block in blocks:
+            if (block / "partition").exists():                   # a partition, not the whole disk
+                continue
+            try:
+                if str(block.resolve()).startswith(str(usb) + "/"):
+                    disks.append(block.name)
+            except OSError:
+                continue
+        rows.append({"instance_id": "USB %04X:%04X at %s" % (SONY_VID, pid, dev.name),
+                     "class": ",".join(classes) or None, "name": _sysfs_optional(dev / "product"),
+                     "service": ",".join(dict.fromkeys(drivers)) or "none", "status": None,
+                     "sysfs": str(usb), "disks": sorted(disks)})
+    return rows
+
+
+def _unescaped(text):
+    """/proc/self/mounts escapes a space as \\040 and a tab as \\011."""
+    return re.sub(r"\\[0-7]{3}", lambda m: chr(int(m.group()[1:], 8)), text)
+
+
+def sony_mounts():
+    """(device, mountpoint) of everything mounted from a Sony camera's card: the card as a whole
+    disk or any partition of it. The device of each /proc/self/mounts line is resolved (as a
+    /dev/disk/by-label/... device is) and matched by name to a /sys/class/block entry that sits
+    under a Sony device, so a mount by label or UUID is found as well."""
+    out = []
+    try:
+        mounts = MOUNTS.read_text(encoding="utf8", errors="replace").splitlines()
+    except OSError:
+        return out
+    roots = []
+    try:
+        entries = sorted(SYSFS_USB.iterdir())
+    except OSError:
+        entries = []
+    for dev in (p for p in entries if ":" not in p.name):
+        vid = _sysfs_optional(dev / "idVendor")
+        try:
+            if vid and int(vid, 16) == SONY_VID:
+                roots.append(dev.resolve())
+        except ValueError:
+            continue
+    for line in mounts:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        device, point = _unescaped(parts[0]), _unescaped(parts[1])
+        try:
+            block = (SYSFS_BLOCK / Path(device).resolve().name).resolve()      # by-label/CARD -> sda1 -> sda1
+        except OSError:
+            continue
+        if any(str(block).startswith(str(root) + "/") for root in roots):
+            out.append((device, point))
+    return out
+
+
 def unmount_sony_disks(session):
     """macOS: unmount the camera's memory card before its mass-storage driver is taken away, so nothing the Mac was
     writing to the card is cut off. Unmount only: the card is not ejected and nothing is written to it. Stops when
@@ -257,6 +371,30 @@ def unmount_sony_disks(session):
                 raise StopTest("macOS could not unmount the camera's memory card (%s: %s). Close any app showing it "
                                "(Finder, Photos, Image Capture) and run again" % (disk, text))
             session.say("Unmounted the camera's memory card (%s)" % disk)
+
+
+def unmount_sony_disks_linux(session):
+    """Linux: unmount the camera's memory card before its usb-storage driver is taken away, so
+    nothing the desktop was writing to the card is cut off (umount only: the card is not ejected
+    and nothing is written to it). Needs root, as the linux launchers run this. Stops when the
+    camera can't be found in /sys/bus/usb: its card might still be mounted."""
+    rows = sysfs_sony_devices()
+    session.log("pnp", label="before the unmount", devices=rows)
+    if not rows or any("error" in r for r in rows):
+        raise StopTest("the camera was not found in /sys/bus/usb, so its memory card could not be unmounted "
+                       "(%s). Nothing was sent" % (rows[0]["error"] if rows else "no Sony USB device listed"))
+    mounts = sony_mounts()
+    if not mounts:
+        session.say("Nothing of the camera's memory card is mounted")
+        return
+    for device, point in mounts:
+        r = subprocess.run(["umount", device], capture_output=True, text=True, timeout=60)
+        text = (r.stdout + r.stderr).strip()
+        session.log("unmount", device=device, mountpoint=point, code=r.returncode, out=text)
+        if r.returncode != 0:
+            raise StopTest("Linux could not unmount the camera's memory card (%s: %s). Close any app showing it "
+                           "(the desktop's file manager, a media player) and run again" % (device, text))
+        session.say("Unmounted the camera's memory card (%s, was at %s)" % (device, point))
 
 
 def print_pnp(session, label):

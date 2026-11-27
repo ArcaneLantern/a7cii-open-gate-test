@@ -4,6 +4,8 @@ Camera: USB Connection Mode = Mass Storage. The camera's USB device needs the
 libusb-win32 driver (Zadig), first in mass-storage mode, then again once it
 has switched to service mode. So a first live run normally ends with
 "install the driver for the service device and run again": that is expected.
+On macOS and Linux the OS's own mass-storage driver is taken over instead (as
+root; see take_over_from_macos / take_over_from_linux): no driver is installed.
 
   python -I -B ct1_stage2_service.py --dry-run     run against the simulated camera, list what is sent
   python -I -B ct1_stage2_service.py --list        show which Sony devices libusb can see; sends nothing
@@ -131,13 +133,18 @@ def libusb_devices():
     except usb.core.NoBackendError:
         if sys.platform == "darwin":
             raise c.StopTest("pyusb found no libusb library. Run macos/setup.command again (it installs libusb-package)")
+        if sys.platform.startswith("linux"):
+            raise c.StopTest("pyusb found no libusb library. Install the distribution's own libusb "
+                             "(Debian/Ubuntu: libusb-1.0-0, Fedora: libusb1, Arch: libusb), then run again; "
+                             "on NixOS the launchers bring it themselves (linux/shell.nix): run them outside "
+                             "the launchers only inside nix-shell linux/shell.nix")
         raise c.StopTest("pyusb found no libusb library. The libusb-win32 driver is not installed yet: "
                          "do the Zadig step for the camera in Mass Storage mode, then run again")
     return msc, [d for d in vendor if d.idProduct in SENSER_PIDS]
 
 
 def wait_for_service_device(session):
-    for _ in range(10):
+    for _ in range(240):                                   # 120 s: a first field run showed the A7C II can sit at its own connection prompt before it comes back as the service device
         time.sleep(0.5)
         try:
             _msc, senser = libusb_devices()
@@ -168,7 +175,8 @@ def connect(session):
     except Exception:
         session.results["libusb_backend"] = None
     if len(msc) + len(senser) != 1:
-        hint = "Unplug other Sony USB devices" if sys.platform == "darwin" else "Check the Zadig step and unplug other Sony USB devices"
+        hint = ("Check the Zadig step and unplug other Sony USB devices" if sys.platform == "win32"
+                else "Unplug other Sony USB devices")
         raise c.StopTest("libusb sees %d Sony mass-storage and %d Sony service devices; exactly one camera is "
                          "needed. %s" % (len(msc), len(senser), hint))
     handle = senser[0] if senser else None
@@ -179,6 +187,8 @@ def connect(session):
         inner = libusb.MscContext().openDevice(msc[0])
         if sys.platform == "darwin":
             take_over_from_macos(session, inner)
+        elif sys.platform.startswith("linux"):
+            take_over_from_linux(session, inner)
         session.log("note", text="SCSI TEST UNIT READY and INQUIRY through PMCA-RE MscDevice")
         info = MscDevice(inner).getDeviceInfo()
         session.results["msc_usb_id"] = "%04x:%04x" % (msc[0].idVendor, msc[0].idProduct)
@@ -189,6 +199,7 @@ def connect(session):
             raise c.StopTest("the mass-storage device does not identify as a Sony camera")
         phase_a(session, inner)
         session.say("Waiting for the camera to switch")
+        session.say("  (The A7C II shows its USB connection prompt when it switches: choose Mass Storage there.)")
         handle = wait_for_service_device(session)
         rows = c.print_pnp(session, "after the switch")
         if handle is None:
@@ -198,7 +209,7 @@ def connect(session):
                 raise c.StopTest("EXPECTED on a first run: the camera is in service mode (054C:0336) but that "
                                  "device has no libusb driver yet. Leave the camera connected and on, install "
                                  "libusb-win32 for it with Zadig, then run this command again")
-            raise c.StopTest("the camera did not come back as a service device within 5 seconds")
+            raise c.StopTest("the camera did not come back as a service device within 120 seconds")
     from pmca.usb.driver.generic import libusb
     session.results["service_interface_class"] = 255         # it was listed by interface class 255
     session.say("Found a camera in service mode")
@@ -221,6 +232,27 @@ def take_over_from_macos(session, inner):
         raise c.StopTest("macOS did not let go of the camera's mass-storage driver (%s)" % exc)
     session.log("note", text="macOS mass-storage driver detached through PMCA-RE UsbBackend.reset")
     session.say("macOS let go of the camera")
+
+
+def take_over_from_linux(session, inner):
+    """Linux keeps its own usb-storage driver on the camera's memory card. libusb can talk to the
+    card only once that driver lets go, and both the unmount and the detach need root rights (the
+    card is unmounted first; then PMCA-RE's UsbBackend.reset() detaches the driver from interface 0
+    -- no capability is needed, only the root rights the linux launchers run this under). Nothing
+    is sent to the camera here."""
+    import os
+    import usb.core
+    if os.geteuid() != 0:
+        raise c.StopTest("Linux holds the camera with its own usb-storage driver, and unmounting its card and "
+                         "taking the driver over need admin rights. Run the launchers in the linux folder: "
+                         "they ask for your password")
+    c.unmount_sony_disks_linux(session)
+    try:
+        inner.reset()
+    except usb.core.USBError as exc:
+        raise c.StopTest("Linux did not let go of the camera's mass-storage driver (%s)" % exc)
+    session.log("note", text="Linux usb-storage driver detached through PMCA-RE UsbBackend.reset")
+    session.say("Linux let go of the camera")
 
 
 # ------------------------------------------------------------ dry run
